@@ -1,0 +1,156 @@
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+contract MemeToken is ERC20 {
+    address public creator;
+
+    constructor(
+        string memory name,
+        string memory symbol,
+        uint256 supply,
+        address owner
+    ) ERC20(name, symbol) {
+        creator = owner;
+        _mint(owner, supply * 10 ** decimals());
+    }
+}
+
+contract MemeSocialLaunchpad is Ownable, ReentrancyGuard {
+
+    struct Meme {
+        address token;
+        address creator;
+        string name;
+        string symbol;
+        string imageURI;
+        uint256 createdAt;
+    }
+
+    struct Post {
+        address author;
+        uint256 memeId;
+        string content;
+        uint256 likes;
+        uint256 timestamp;
+    }
+
+    Meme[] public memes;
+    Post[] public posts;
+
+    mapping(uint256 => mapping(address => bool)) public liked;
+    mapping(address => uint256) public creatorTips;
+
+    event MemeCreated(
+        uint256 indexed id,
+        address indexed creator,
+        address token
+    );
+
+    event NewPost(
+        uint256 indexed postId,
+        address indexed author
+    );
+
+    event NewLike(uint256 indexed postId, address user);
+
+    event TipReceived(address indexed creator, uint256 amount);
+
+    constructor() Ownable(msg.sender) {}
+
+    // CREATE MEME TOKEN
+    function createMeme(
+        string memory name,
+        string memory symbol,
+        string memory imageURI,
+        uint256 supply
+    ) external {
+        require(supply > 0, "Invalid supply");
+
+        MemeToken token = new MemeToken(
+            name,
+            symbol,
+            supply,
+            msg.sender
+        );
+
+        memes.push(Meme({
+            token: address(token),
+            creator: msg.sender,
+            name: name,
+            symbol: symbol,
+            imageURI: imageURI,
+            createdAt: block.timestamp
+        }));
+
+        emit MemeCreated(
+            memes.length - 1,
+            msg.sender,
+            address(token)
+        );
+    }
+
+    // SOCIAL FEED
+    function createPost(
+        uint256 memeId,
+        string calldata content
+    ) external {
+        require(memeId < memes.length, "Invalid meme");
+        require(bytes(content).length > 0, "Empty post");
+
+        posts.push(Post({
+            author: msg.sender,
+            memeId: memeId,
+            content: content,
+            likes: 0,
+            timestamp: block.timestamp
+        }));
+
+        emit NewPost(posts.length - 1, msg.sender);
+    }
+
+    // LIKE POST
+    function likePost(uint256 postId) external {
+        require(postId < posts.length, "Invalid post");
+        require(!liked[postId][msg.sender], "Already liked");
+
+        liked[postId][msg.sender] = true;
+        posts[postId].likes++;
+
+        emit NewLike(postId, msg.sender);
+    }
+
+    // TIP CREATOR
+    function tipCreator(uint256 memeId)
+        external
+        payable
+        nonReentrant
+    {
+        require(memeId < memes.length, "Invalid meme");
+        require(msg.value > 0, "No ETH sent");
+
+        address creator = memes[memeId].creator;
+
+        creatorTips[creator] += msg.value;
+
+        (bool success, ) = payable(creator).call{
+            value: msg.value
+        }("");
+
+        require(success, "Transfer failed");
+
+        emit TipReceived(creator, msg.value);
+    }
+
+    function memeCount() external view returns (uint256) {
+        return memes.length;
+    }
+
+    function postCount() external view returns (uint256) {
+        return posts.length;
+    }
+}
